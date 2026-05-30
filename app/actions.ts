@@ -142,6 +142,8 @@ async function deliverQuoteEmail(
   const bccEnv = process.env.RESEND_BCC_EMAIL;
   const fromUsed = fromEnv ?? DEFAULT_FROM;
 
+  console.log(`RESEND_API_KEY present: ${!!apiKey}`);
+
   // Forensic diagnostic — printed for every submission. Safe in production:
   // API key is masked, the other values are non-secret configuration.
   console.log(
@@ -169,6 +171,7 @@ async function deliverQuoteEmail(
   const resend = new Resend(apiKey);
   const { text, html } = buildEmailContent(fields);
 
+  console.log("CSCS RESEND START");
   let response;
   try {
     response = await resend.emails.send({
@@ -181,19 +184,26 @@ async function deliverQuoteEmail(
       html,
     });
   } catch (err) {
-    // Network-level / SDK throw (rare — Resend SDK usually returns errors in the response).
+    const sanitized =
+      err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    console.log(`CSCS RESEND FAILURE ${sanitized}`);
     return {
       delivered: false,
-      reason: `Resend SDK threw: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`,
+      reason: `Resend SDK threw: ${sanitized}`,
     };
   }
 
   if (response.error) {
+    const sanitized = `${response.error.name ?? "unknown"} — ${response.error.message ?? "(no message)"}`;
+    console.log(`CSCS RESEND FAILURE ${sanitized}`);
     return {
       delivered: false,
-      reason: `Resend API error: ${response.error.name ?? "unknown"} — ${response.error.message ?? "(no message)"}`,
+      reason: `Resend API error: ${sanitized}`,
     };
   }
+
+  const sendId = response.data?.id ?? "(no id)";
+  console.log(`CSCS RESEND SUCCESS id=${sendId}`);
 
   return {
     delivered: true,
@@ -205,9 +215,16 @@ export async function submitQuote(
   _prevState: QuoteState,
   formData: FormData,
 ): Promise<QuoteState> {
-  // Honeypot — bots tend to fill every field.
-  const honeypot = (formData.get("website") as string | null)?.trim();
+  console.log("CSCS FORM START");
+
+  // Honeypot — bots tend to fill every field. The field name is intentionally
+  // uncommon (not "website", "url", "name") so browser autofill and password
+  // managers do not populate it for legitimate users.
+  const honeypot = (formData.get("cscs_form_aux_check") as string | null)?.trim();
   if (honeypot) {
+    console.log(
+      `CSCS HONEYPOT TRIGGERED value=${JSON.stringify(honeypot.slice(0, 120))}`,
+    );
     return { status: "success", message: "Thanks — we'll be in touch." };
   }
 
