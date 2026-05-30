@@ -108,7 +108,15 @@ async function deliverQuoteEmail(fields: QuoteFields): Promise<{
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
-    return { delivered: false, reason: "RESEND_API_KEY not set" };
+    // In production, a missing API key means leads are silently dropped.
+    // Throw so the caller surfaces an error to the user (who can then phone
+    // or email directly). In dev/preview, allow soft failure for iteration.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "RESEND_API_KEY missing at runtime — check service env vars and redeploy",
+      );
+    }
+    return { delivered: false, reason: "RESEND_API_KEY not set (non-production)" };
   }
 
   const from = process.env.RESEND_FROM_EMAIL ?? DEFAULT_FROM;
