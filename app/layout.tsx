@@ -59,6 +59,9 @@ export const metadata: Metadata = {
     follow: true,
     googleBot: { index: true, follow: true, "max-image-preview": "large" },
   },
+  verification: {
+    google: "O79EKVIVKDl3bY2a9LYyNLjMYgRBQIFRVjAmGmAMh-c",
+  },
   category: "business",
   icons: { icon: "/logo.png", apple: "/logo.png" },
 };
