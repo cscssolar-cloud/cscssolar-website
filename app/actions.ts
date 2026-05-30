@@ -24,16 +24,16 @@ const REQUIRED: QuoteField[] = ["name", "email", "phone", "address"];
 // Where leads land.
 const TO_ADDRESS = "info@cscssolar.com";
 
-// Verified-domain sender. Override per-environment with RESEND_FROM_EMAIL.
+// Verified-domain sender.
 const DEFAULT_FROM = "CSCS Solar <noreply@cscssolar.com>";
 
 // User-facing copy — kept in one place so success/failure messages are honest.
 const MSG_SUCCESS =
   "Thanks — we received your request. A CSCS team member will reply within one business day.";
 const MSG_DELIVERY_FAILED =
-  "Your request was recorded, but our email system could not deliver it right now. Please call (559) 722-1800 or email info@cscssolar.com to confirm — we have your details and will follow up.";
+  "We could not send your request right now. Please call (559) 722-1800 or email info@cscssolar.com so we can help.";
 const MSG_UNEXPECTED_ERROR =
-  "Something went wrong on our end. Please call (559) 722-1800 or email info@cscssolar.com — we have your details and will follow up.";
+  "Something went wrong on our end. Please call (559) 722-1800 or email info@cscssolar.com so we can help.";
 
 // One-shot boot log so we can confirm the running container's env at process start.
 // Module-level so it fires exactly once per cold start, not per request.
@@ -42,7 +42,6 @@ console.log(
     tag: "cscs.boot.env_check",
     nodeEnv: process.env.NODE_ENV,
     hasResendApiKey: !!process.env.RESEND_API_KEY,
-    hasResendFromEmail: !!process.env.RESEND_FROM_EMAIL,
     hasResendBccEmail: !!process.env.RESEND_BCC_EMAIL,
     bootAt: new Date().toISOString(),
   }),
@@ -66,6 +65,13 @@ function maskApiKey(key: string | undefined): string {
   if (!key) return "(empty)";
   if (key.length < 8) return `(too-short, len=${key.length})`;
   return `${key.slice(0, 4)}…${key.slice(-3)} (len=${key.length})`;
+}
+
+function sanitizeDeliveryError(err: unknown) {
+  const raw = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  const apiKey = process.env.RESEND_API_KEY;
+
+  return apiKey ? raw.replaceAll(apiKey, "[redacted]") : raw;
 }
 
 function buildEmailContent(fields: QuoteFields) {
@@ -138,11 +144,9 @@ async function deliverQuoteEmail(
   auditId: string,
 ): Promise<DeliveryResult> {
   const apiKey = process.env.RESEND_API_KEY;
-  const fromEnv = process.env.RESEND_FROM_EMAIL;
   const bccEnv = process.env.RESEND_BCC_EMAIL;
-  const fromUsed = fromEnv ?? DEFAULT_FROM;
 
-  console.log(`RESEND_API_KEY present: ${!!apiKey}`);
+  console.log(`RESEND_API_KEY present ${!!apiKey}`);
 
   // Forensic diagnostic — printed for every submission. Safe in production:
   // API key is masked, the other values are non-secret configuration.
@@ -153,18 +157,18 @@ async function deliverQuoteEmail(
       nodeEnv: process.env.NODE_ENV,
       hasApiKey: !!apiKey,
       apiKeyShape: maskApiKey(apiKey),
-      fromConfigured: !!fromEnv,
-      fromUsed,
+      from: DEFAULT_FROM,
       to: TO_ADDRESS,
       bccConfigured: !!bccEnv,
-      bcc: bccEnv ?? null,
     }),
   );
 
   if (!apiKey) {
+    const reason = "RESEND_API_KEY missing at runtime";
+    console.log(`CSCS RESEND FAILURE ${reason}`);
     return {
       delivered: false,
-      reason: "RESEND_API_KEY missing at runtime",
+      reason,
     };
   }
 
@@ -175,7 +179,7 @@ async function deliverQuoteEmail(
   let response;
   try {
     response = await resend.emails.send({
-      from: fromUsed,
+      from: DEFAULT_FROM,
       to: [TO_ADDRESS],
       bcc: bccEnv ? [bccEnv] : undefined,
       replyTo: fields.email,
@@ -184,8 +188,7 @@ async function deliverQuoteEmail(
       html,
     });
   } catch (err) {
-    const sanitized =
-      err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    const sanitized = sanitizeDeliveryError(err);
     console.log(`CSCS RESEND FAILURE ${sanitized}`);
     return {
       delivered: false,
@@ -194,7 +197,9 @@ async function deliverQuoteEmail(
   }
 
   if (response.error) {
-    const sanitized = `${response.error.name ?? "unknown"} — ${response.error.message ?? "(no message)"}`;
+    const sanitized = sanitizeDeliveryError(
+      `${response.error.name ?? "unknown"} — ${response.error.message ?? "(no message)"}`,
+    );
     console.log(`CSCS RESEND FAILURE ${sanitized}`);
     return {
       delivered: false,
@@ -216,17 +221,6 @@ export async function submitQuote(
   formData: FormData,
 ): Promise<QuoteState> {
   console.log("CSCS FORM START");
-
-  // Honeypot — bots tend to fill every field. The field name is intentionally
-  // uncommon (not "website", "url", "name") so browser autofill and password
-  // managers do not populate it for legitimate users.
-  const honeypot = (formData.get("cscs_form_aux_check") as string | null)?.trim();
-  if (honeypot) {
-    console.log(
-      `CSCS HONEYPOT TRIGGERED value=${JSON.stringify(honeypot.slice(0, 120))}`,
-    );
-    return { status: "success", message: "Thanks — we'll be in touch." };
-  }
 
   const fields: QuoteFields = {
     name: ((formData.get("name") as string) ?? "").trim(),
@@ -257,14 +251,13 @@ export async function submitQuote(
     };
   }
 
-  // Unconditional audit log — captures the lead even if delivery fails entirely.
+  // Correlation ID only; do not log lead details in production.
   const auditId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   console.log(
     JSON.stringify({
       tag: "cscs.quote.received",
       auditId,
       receivedAt: new Date().toISOString(),
-      fields,
     }),
   );
 
