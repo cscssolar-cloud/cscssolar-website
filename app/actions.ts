@@ -24,8 +24,29 @@ const REQUIRED: QuoteField[] = ["name", "email", "phone", "address"];
 // Where leads land.
 const TO_ADDRESS = "info@cscssolar.com";
 
-// Verified-domain sender. Override per-environment with RESEND_FROM_EMAIL if needed.
+// Verified-domain sender. Override per-environment with RESEND_FROM_EMAIL.
 const DEFAULT_FROM = "CSCS Solar <noreply@cscssolar.com>";
+
+// User-facing copy — kept in one place so success/failure messages are honest.
+const MSG_SUCCESS =
+  "Thanks — we received your request. A CSCS team member will reply within one business day.";
+const MSG_DELIVERY_FAILED =
+  "Your request was recorded, but our email system could not deliver it right now. Please call (559) 722-1800 or email info@cscssolar.com to confirm — we have your details and will follow up.";
+const MSG_UNEXPECTED_ERROR =
+  "Something went wrong on our end. Please call (559) 722-1800 or email info@cscssolar.com — we have your details and will follow up.";
+
+// One-shot boot log so we can confirm the running container's env at process start.
+// Module-level so it fires exactly once per cold start, not per request.
+console.log(
+  JSON.stringify({
+    tag: "cscs.boot.env_check",
+    nodeEnv: process.env.NODE_ENV,
+    hasResendApiKey: !!process.env.RESEND_API_KEY,
+    hasResendFromEmail: !!process.env.RESEND_FROM_EMAIL,
+    hasResendBccEmail: !!process.env.RESEND_BCC_EMAIL,
+    bootAt: new Date().toISOString(),
+  }),
+);
 
 function isValidEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -38,6 +59,13 @@ function escapeHtml(v: string) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+// Sensitive-value masking. Logs prefix + length only, never the secret.
+function maskApiKey(key: string | undefined): string {
+  if (!key) return "(empty)";
+  if (key.length < 8) return `(too-short, len=${key.length})`;
+  return `${key.slice(0, 4)}…${key.slice(-3)} (len=${key.length})`;
 }
 
 function buildEmailContent(fields: QuoteFields) {
@@ -101,51 +129,83 @@ function buildEmailContent(fields: QuoteFields) {
   return { text, html };
 }
 
-async function deliverQuoteEmail(fields: QuoteFields): Promise<{
-  delivered: boolean;
-  reason?: string;
-}> {
+type DeliveryResult =
+  | { delivered: true; resendId: string | undefined }
+  | { delivered: false; reason: string };
+
+async function deliverQuoteEmail(
+  fields: QuoteFields,
+  auditId: string,
+): Promise<DeliveryResult> {
   const apiKey = process.env.RESEND_API_KEY;
+  const fromEnv = process.env.RESEND_FROM_EMAIL;
+  const bccEnv = process.env.RESEND_BCC_EMAIL;
+  const fromUsed = fromEnv ?? DEFAULT_FROM;
+
+  // Forensic diagnostic — printed for every submission. Safe in production:
+  // API key is masked, the other values are non-secret configuration.
+  console.log(
+    JSON.stringify({
+      tag: "cscs.quote.delivery_diagnostic",
+      auditId,
+      nodeEnv: process.env.NODE_ENV,
+      hasApiKey: !!apiKey,
+      apiKeyShape: maskApiKey(apiKey),
+      fromConfigured: !!fromEnv,
+      fromUsed,
+      to: TO_ADDRESS,
+      bccConfigured: !!bccEnv,
+      bcc: bccEnv ?? null,
+    }),
+  );
 
   if (!apiKey) {
-    // In production, a missing API key means leads are silently dropped.
-    // Throw so the caller surfaces an error to the user (who can then phone
-    // or email directly). In dev/preview, allow soft failure for iteration.
-    if (process.env.NODE_ENV === "production") {
-      throw new Error(
-        "RESEND_API_KEY missing at runtime — check service env vars and redeploy",
-      );
-    }
-    return { delivered: false, reason: "RESEND_API_KEY not set (non-production)" };
+    return {
+      delivered: false,
+      reason: "RESEND_API_KEY missing at runtime",
+    };
   }
 
-  const from = process.env.RESEND_FROM_EMAIL ?? DEFAULT_FROM;
-  const bcc = process.env.RESEND_BCC_EMAIL;
   const resend = new Resend(apiKey);
   const { text, html } = buildEmailContent(fields);
 
-  const result = await resend.emails.send({
-    from,
-    to: [TO_ADDRESS],
-    bcc: bcc ? [bcc] : undefined,
-    replyTo: fields.email,
-    subject: `New quote request — ${fields.name}${fields.company ? ` (${fields.company})` : ""}`,
-    text,
-    html,
-  });
-
-  if (result.error) {
-    throw new Error(`Resend send failed: ${result.error.message}`);
+  let response;
+  try {
+    response = await resend.emails.send({
+      from: fromUsed,
+      to: [TO_ADDRESS],
+      bcc: bccEnv ? [bccEnv] : undefined,
+      replyTo: fields.email,
+      subject: `New quote request — ${fields.name}${fields.company ? ` (${fields.company})` : ""}`,
+      text,
+      html,
+    });
+  } catch (err) {
+    // Network-level / SDK throw (rare — Resend SDK usually returns errors in the response).
+    return {
+      delivered: false,
+      reason: `Resend SDK threw: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`,
+    };
   }
 
-  return { delivered: true };
+  if (response.error) {
+    return {
+      delivered: false,
+      reason: `Resend API error: ${response.error.name ?? "unknown"} — ${response.error.message ?? "(no message)"}`,
+    };
+  }
+
+  return {
+    delivered: true,
+    resendId: response.data?.id,
+  };
 }
 
 export async function submitQuote(
   _prevState: QuoteState,
   formData: FormData,
 ): Promise<QuoteState> {
-  // Honeypot — bots tend to fill every field
+  // Honeypot — bots tend to fill every field.
   const honeypot = (formData.get("website") as string | null)?.trim();
   if (honeypot) {
     return { status: "success", message: "Thanks — we'll be in touch." };
@@ -180,10 +240,7 @@ export async function submitQuote(
     };
   }
 
-  // Structured audit log — printed for EVERY valid submission, before delivery.
-  // Captured in Vercel runtime logs. Guarantees the lead is recoverable even
-  // if Resend later returns an error, the inbox is misconfigured, or the
-  // recipient mailbox bounces.
+  // Unconditional audit log — captures the lead even if delivery fails entirely.
   const auditId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   console.log(
     JSON.stringify({
@@ -194,52 +251,42 @@ export async function submitQuote(
     }),
   );
 
-  let deliveryReason: string | undefined;
+  let result: DeliveryResult;
   try {
-    const result = await deliverQuoteEmail(fields);
-    if (result.delivered) {
-      console.log(
-        JSON.stringify({
-          tag: "cscs.quote.delivered",
-          auditId,
-          to: TO_ADDRESS,
-        }),
-      );
-    } else {
-      deliveryReason = result.reason;
-      console.warn(
-        JSON.stringify({
-          tag: "cscs.quote.undelivered",
-          auditId,
-          reason: result.reason,
-        }),
-      );
-    }
+    result = await deliverQuoteEmail(fields, auditId);
   } catch (err) {
+    // Reserved for genuinely unexpected JS errors (out-of-memory, programming bug,
+    // module import failure). Delivery function handles its own known errors.
     console.error(
       JSON.stringify({
         tag: "cscs.quote.delivery_failed",
         auditId,
-        error: err instanceof Error ? err.message : String(err),
+        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
       }),
     );
-    return {
-      status: "error",
-      message:
-        "Something went wrong sending your request. Please call (559) 722-1800 or email info@cscssolar.com — we have your details and will follow up.",
-    };
+    return { status: "error", message: MSG_UNEXPECTED_ERROR };
   }
 
-  // Lead is in the audit log even if delivery quietly failed (no API key).
-  // We still report success to the customer because the lead is recoverable
-  // server-side; failing the UX would just frustrate them.
-  if (deliveryReason) {
-    // No-op intentional — already logged above.
+  if (result.delivered) {
+    console.log(
+      JSON.stringify({
+        tag: "cscs.quote.delivered",
+        auditId,
+        resendId: result.resendId ?? null,
+        to: TO_ADDRESS,
+      }),
+    );
+    return { status: "success", message: MSG_SUCCESS };
   }
 
-  return {
-    status: "success",
-    message:
-      "Thanks — we received your request. A CSCS team member will reply within one business day.",
-  };
+  // Delivery did not happen. Tell the customer truthfully.
+  console.error(
+    JSON.stringify({
+      tag: "cscs.quote.undelivered",
+      auditId,
+      reason: result.reason,
+    }),
+  );
+  return { status: "error", message: MSG_DELIVERY_FAILED };
 }
