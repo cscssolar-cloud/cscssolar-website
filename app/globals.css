@@ -1,0 +1,212 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-display), "Archivo Black", Impact, "Helvetica Neue",
+    Arial, sans-serif;
+
+  /* CSCS Primary Blue — trust, headlines, action */
+  --color-brand-50: #eaf2fd;
+  --color-brand-100: #d2e3fb;
+  --color-brand-200: #a6c7f7;
+  --color-brand-300: #79aaf2;
+  --color-brand-400: #4d8eee;
+  --color-brand-500: #1e88e5; /* CSCS Secondary Blue */
+  --color-brand-600: #0b5ed7; /* CSCS Primary Blue */
+  --color-brand-700: #094bab;
+  --color-brand-800: #073880;
+  --color-brand-900: #052654;
+  --color-brand-950: #031738;
+
+  /* CSCS Light Green — fresh, premium, alive */
+  --color-accent-50: #f0faf3;
+  --color-accent-100: #dcf4e3;
+  --color-accent-200: #b9e8c8;
+  --color-accent-300: #8be3a6; /* CSCS Secondary Light Green */
+  --color-accent-400: #6fd08c; /* CSCS Light Green */
+  --color-accent-500: #34a96e;
+  --color-accent-600: #228a55;
+  --color-accent-700: #176b41;
+  --color-accent-800: #0e4d2e;
+
+  /* CSCS Accent Gold — sparing */
+  --color-gold-300: #ffe082;
+  --color-gold-400: #ffd54f;
+  --color-gold-500: #ffc107;
+  --color-gold-600: #ffa000;
+
+  /* Neutrals — calmer */
+  --color-cream: #fafbfc;
+  --color-cream-100: #f3f5f8;
+  --color-ink: #0f172a;
+  --color-ink-soft: #475569;
+  --color-line: #e8ecf1;
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: var(--color-ink);
+}
+
+html {
+  scroll-padding-top: 5.5rem;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  overflow-x: hidden;
+}
+
+/* Display headings — Archivo Black with tight tracking */
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+  line-height: 0.95;
+}
+
+/* Eyebrow label */
+.eyebrow {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+/* Hero — deeper, more cinematic. Less busy than before. */
+.hero-bg {
+  background-color: #052654;
+  background-image:
+    radial-gradient(
+      ellipse 55% 45% at 78% 0%,
+      rgba(255, 193, 7, 0.18) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 50% 45% at 0% 110%,
+      rgba(111, 208, 140, 0.16) 0%,
+      transparent 60%
+    ),
+    linear-gradient(180deg, #052654 0%, #073880 65%, #0b4ba5 100%);
+}
+
+/* Soft architectural grid — barely-there, premium */
+.hero-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(
+    ellipse 80% 60% at 50% 0%,
+    rgba(0, 0, 0, 0.7),
+    transparent 75%
+  );
+}
+
+/* Soft dot accent for light sections */
+.soft-dots {
+  background-image: radial-gradient(
+    rgba(11, 94, 215, 0.05) 1px,
+    transparent 1.5px
+  );
+  background-size: 28px 28px;
+}
+
+/* Brand stripe — section divider */
+.brand-stripe {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-brand-600) 0%,
+    var(--color-brand-600) 40%,
+    var(--color-accent-400) 40%,
+    var(--color-accent-400) 75%,
+    var(--color-gold-500) 75%,
+    var(--color-gold-500) 100%
+  );
+}
+
+/* Logo plate — guarantees a solid white background for any logo image */
+.logo-plate {
+  background-color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.logo-plate > img {
+  display: block;
+  object-fit: contain;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  image-rendering: -webkit-optimize-contrast;
+  -ms-interpolation-mode: bicubic;
+}
+
+/* Subtle motion utilities */
+@keyframes float-soft {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.float-soft {
+  animation: float-soft 7s ease-in-out infinite;
+}
+
+@keyframes sun-pulse {
+  0%, 100% { opacity: 0.9; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+.sun-pulse {
+  animation: sun-pulse 6s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes shine-sweep {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(220%); }
+}
+.shine-sweep {
+  animation: shine-sweep 9s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(111, 208, 140, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(111, 208, 140, 0);
+  }
+}
+.status-pulse {
+  animation: status-pulse 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float-soft,
+  .sun-pulse,
+  .shine-sweep,
+  .status-pulse {
+    animation: none;
+  }
+}
+
+/* Accessible focus ring */
+:where(a, button, input, textarea, select):focus-visible {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--color-brand-600);
+  color: #ffffff;
+}
